@@ -38,8 +38,28 @@ HTTPS matters: it's needed for the embed + a secure context, and a public host g
 
 1. In the Tesla browser, open your public URL.
 2. Tap ⚙ (top right), paste your API key, Save.
-3. Search or tap a category chip; tap a video to play. Tap **Auf YouTube öffnen** if a specific video
-   disallows embedding.
+3. Search (with live suggestions), scroll for more, or tap a category chip; tap a video to play.
+   Tap **Auf YouTube öffnen** if a specific video disallows embedding.
+
+## 4. (Optional) Sign in for Abos / Mag ich / Playlists
+
+This adds personalised rows from **your** account: latest from your **subscriptions**, your **liked**
+videos, and your **playlists**. (YouTube does **not** expose the algorithmic "Recommended for you" home
+feed via any official API — no third-party app can show it. This is the closest legitimate version.)
+
+Create an **OAuth Client ID** (separate from the API key):
+
+1. Google Cloud → APIs & Services → **OAuth consent screen**: User type *External*, fill app name +
+   your email, add scope `.../auth/youtube.readonly`, and add your own Google account under **Test users**
+   (the app stays in "Testing" — that's fine for personal use).
+2. → **Credentials → Create credentials → OAuth client ID** → type **Web application**.
+   - **Authorized JavaScript origins:** `https://bta-private.github.io`
+   - **Authorized redirect URIs:** `https://bta-private.github.io/cartube/`  *(exact, with trailing slash)*
+3. Copy the Client ID (`…apps.googleusercontent.com`) and paste it into CarTube ⚙ → save.
+4. Tap the 👤 icon (top right) → sign in. New chips **Abos / Mag ich / Playlists** appear.
+
+Login uses the OAuth *implicit* flow (a redirect, no Google JS SDK) so it works on the old Tesla browser.
+The token lasts ~1 hour and lives only in the tab's sessionStorage; after that, tap 👤 again.
 
 ---
 

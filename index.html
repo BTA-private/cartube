@@ -43,8 +43,18 @@ a{color:inherit;}
 .searchbox input::placeholder{color:var(--ink-2);}
 .searchbtn{width:var(--tap);height:var(--tap);border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;}
 .searchbtn svg,.iconbtn svg{width:22px;height:22px;stroke:var(--ink);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
-.iconbtn{width:var(--tap);height:var(--tap);border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;margin-left:6px;}
+.iconbtn{width:var(--tap);height:var(--tap);border-radius:50%;flex:0 0 auto;display:flex;align-items:center;justify-content:center;margin-left:6px;overflow:hidden;}
 .iconbtn:active,.searchbtn:active{background:var(--bg-3);}
+.avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;}
+
+/* ===== Search suggestions ===== */
+.suggest{position:fixed;top:62px;left:50%;transform:translateX(-50%);z-index:35;
+  width:min(680px,calc(100% - 150px));max-height:62vh;overflow-y:auto;-webkit-overflow-scrolling:touch;
+  background:var(--bg-2);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:6px;}
+.sug-item{display:flex;align-items:center;width:100%;height:48px;padding:0 14px;border-radius:10px;text-align:left;}
+.sug-item:active{background:var(--bg-3);}
+.sug-item svg{width:18px;height:18px;flex:0 0 auto;margin-right:14px;stroke:var(--ink-2);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.sug-item span{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
 /* ===== Category chips ===== */
 .chips{position:fixed;top:68px;left:0;right:0;z-index:20;height:54px;display:flex;align-items:center;
@@ -109,6 +119,7 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   color:var(--ink);font-size:16px;padding:0 14px;outline:none;}
 .field input:focus{border-color:#3ea6ff;}
 .field .hint{font-size:12px;color:var(--ink-2);margin-top:6px;line-height:1.5;}
+.field .hint code{background:var(--bg-3);color:var(--ink);padding:1px 5px;border-radius:4px;font-size:11px;word-break:break-all;}
 .actions{display:flex;justify-content:flex-end;margin-top:8px;}
 .btn{height:50px;border-radius:999px;padding:0 26px;font-weight:700;font-size:16px;}
 .btn.primary{background:var(--red);color:#fff;}
@@ -134,11 +145,15 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
       </button>
     </div>
   </form>
+  <button class="iconbtn" id="authBtn" type="button" aria-label="Anmelden">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+  </button>
   <button class="iconbtn" id="settingsBtn" type="button" aria-label="Einstellungen">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.8 7.8 0 0 0 0-2l2-1.5-2-3.4-2.3 1a7.6 7.6 0 0 0-1.7-1l-.3-2.6h-3.8l-.3 2.6a7.6 7.6 0 0 0-1.7 1l-2.3-1-2 3.4L4.6 11a7.8 7.8 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7.6 7.6 0 0 0 1.7 1l.3 2.6h3.8l.3-2.6a7.6 7.6 0 0 0 1.7-1l2.3 1 2-3.4z"/></svg>
   </button>
 </header>
 
+<div class="suggest" id="suggest" hidden></div>
 <div class="chips" id="chips"></div>
 
 <main id="main">
@@ -177,7 +192,16 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
       <input id="regionInput" type="text" placeholder="DE" autocomplete="off" maxlength="2" />
       <div class="hint">Zweistelliger Ländercode, z. B. DE, AT, CH, US.</div>
     </div>
+    <div class="field">
+      <label for="clientInput">Google OAuth-Client-ID (optional)</label>
+      <input id="clientInput" type="text" placeholder="…apps.googleusercontent.com" autocomplete="off" spellcheck="false" />
+      <div class="hint">Für „Abos / Mag ich / Playlists". Erstelle in der Google Cloud eine <b>OAuth-Client-ID (Typ: Web)</b>,
+        trage als <b>autorisierten JavaScript-Ursprung</b> <code>https://bta-private.github.io</code> und als
+        <b>Weiterleitungs-URI</b> <code>https://bta-private.github.io/cartube/</code> ein, und füge dich im
+        Zustimmungsbildschirm als <b>Testnutzer</b> hinzu. Echte „Empfohlen für dich"-Vorschläge gibt die YouTube-API nicht her.</div>
+    </div>
     <div class="actions">
+      <button class="btn ghost" id="signOutRow" type="button" hidden style="margin-right:auto">Abmelden</button>
       <button class="btn ghost" id="settingsCancel" type="button">Abbrechen</button>
       <button class="btn primary" id="settingsSave" type="button">Speichern</button>
     </div>
@@ -249,13 +273,15 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
 
   /* ---------- API ---------- */
   function api(endpoint, params){
-    params.key = KEY;
+    if(KEY) params.key = KEY;
+    var opts = {};
+    if(signedIn()) opts.headers = { Authorization: "Bearer " + accessToken };
     var qs = new URLSearchParams(params).toString();
-    return fetch(BASE + endpoint + "?" + qs).then(function(r){
+    return fetch(BASE + endpoint + "?" + qs, opts).then(function(r){
       return r.json().then(function(data){
         if(!r.ok){
           var msg = (data && data.error && data.error.message) ? data.error.message : ("HTTP "+r.status);
-          throw new Error(msg);
+          var e = new Error(msg); e.status = r.status; throw e;
         }
         return data;
       });
@@ -317,11 +343,19 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   function loadMore(){
     if(feed.loading || feed.done || !feed.pageToken) return;
     showMore(true);
-    if(feed.mode === "trending") fetchTrending(true); else fetchSearch(true);
+    if(feed.mode === "trending") fetchTrending(true);
+    else if(feed.mode === "search") fetchSearch(true);
+    else if(feed.mode === "likes") fetchLikes(true);
+    else if(feed.mode === "playlist") fetchPlaylistItems(true);
   }
   function showMore(on){ var m = $("more"); if(m) m.hidden = !on; }
   function showError(err){
     var m = err && err.message ? err.message : "Unbekannter Fehler";
+    if(err && err.status === 401){
+      message('Anmeldung abgelaufen oder nicht erlaubt.<br><br><button class="btn primary" id="reLogin" type="button">Mit Google anmelden</button>');
+      var rb = $("reLogin"); if(rb) rb.onclick = signIn;
+      return;
+    }
     var hint = "";
     if(/API key|keyInvalid|invalid/i.test(m)) hint = "Der API-Schlüssel ist ungültig oder fehlt.";
     else if(/quota|exceeded/i.test(m)) hint = "Tageskontingent der API aufgebraucht — morgen wieder verfügbar.";
@@ -392,16 +426,218 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   }
   $("playerBack").onclick = closePlayer;
 
+  /* ---------- Google sign-in (OAuth 2.0 implicit redirect flow) ----------
+     Deliberately NOT the Google Identity Services JS SDK — a plain redirect works on the old
+     Tesla Chromium. Access token (~1h) lives in sessionStorage; no refresh token (implicit). */
+  var OAUTH = localStorage.getItem("cartube.clientid") || "";
+  var SCOPE = "https://www.googleapis.com/auth/youtube.readonly";
+  var accessToken = sessionStorage.getItem("cartube.tok") || "";
+  var tokenExp = +(sessionStorage.getItem("cartube.tokexp") || 0);
+  var profile = null;
+  var PERSON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>';
+
+  function signedIn(){ return !!accessToken && Date.now() < tokenExp; }
+  function redirectUri(){ return location.origin + location.pathname; }
+  function signIn(){
+    if(!OAUTH){ openSettings(false); return; }
+    var p = new URLSearchParams({
+      client_id: OAUTH, redirect_uri: redirectUri(), response_type: "token",
+      scope: SCOPE, include_granted_scopes: "true",
+    });
+    location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + p.toString();
+  }
+  function signOut(){
+    accessToken = ""; tokenExp = 0; profile = null;
+    sessionStorage.removeItem("cartube.tok"); sessionStorage.removeItem("cartube.tokexp");
+    updateAuthUi(); activeChip = "Trends"; renderChips();
+    if(KEY) loadTrending();
+  }
+  function handleRedirect(){
+    if(location.hash && location.hash.indexOf("access_token") >= 0){
+      var h = new URLSearchParams(location.hash.substring(1));
+      var t = h.get("access_token");
+      if(t){
+        accessToken = t;
+        tokenExp = Date.now() + (parseInt(h.get("expires_in") || "3600", 10) * 1000) - 60000;
+        sessionStorage.setItem("cartube.tok", accessToken);
+        sessionStorage.setItem("cartube.tokexp", "" + tokenExp);
+      }
+      try { history.replaceState(null, "", redirectUri()); } catch(e) { location.hash = ""; }
+      return !!t;
+    }
+    return false;
+  }
+  function loadProfile(){
+    api("channels", { part:"snippet", mine:"true" }).then(function(data){
+      var it = (data.items || [])[0];
+      if(it && it.snippet){
+        var th = it.snippet.thumbnails;
+        profile = { name: it.snippet.title, avatar: (th && th.default && th.default.url) || "" };
+        updateAuthUi();
+      }
+    }).catch(function(){});
+  }
+  function updateAuthUi(){
+    var b = $("authBtn");
+    if(b){
+      if(signedIn() && profile && profile.avatar) b.innerHTML = '<img class="avatar" src="' + esc(profile.avatar) + '" alt="">';
+      else b.innerHTML = PERSON;
+      b.setAttribute("aria-label", signedIn() ? (profile ? profile.name : "Angemeldet") : "Mit Google anmelden");
+    }
+    var so = $("signOutRow"); if(so) so.hidden = !signedIn();
+  }
+
+  /* ---------- personalised feeds (only with sign-in) ---------- */
+  function loadAbos(){
+    if(!signedIn()){ signIn(); return; }
+    if(!KEY){ openSettings(true); return; }
+    feed = { mode:"abos", query:"", pageToken:"", loading:true, done:true };
+    busy("Deine Abos werden geladen …");
+    api("subscriptions", { part:"snippet", mine:"true", maxResults:"40", order:"relevance" })
+      .then(function(data){
+        var ids = (data.items || []).map(function(it){ return it.snippet && it.snippet.resourceId && it.snippet.resourceId.channelId; }).filter(Boolean).slice(0, 25);
+        if(!ids.length){ message("Keine Abos gefunden."); feed.loading = false; return null; }
+        return api("channels", { part:"contentDetails", id: ids.join(","), maxResults:"50" });
+      })
+      .then(function(ch){
+        if(!ch) return null;
+        var uploads = (ch.items || []).map(function(c){ return c.contentDetails && c.contentDetails.relatedPlaylists && c.contentDetails.relatedPlaylists.uploads; }).filter(Boolean);
+        return Promise.all(uploads.map(function(pl){
+          return api("playlistItems", { part:"contentDetails", playlistId: pl, maxResults:"3" })
+            .then(function(r){ return (r.items || []).map(function(i){ return i.contentDetails; }); })
+            .catch(function(){ return []; });
+        }));
+      })
+      .then(function(lists){
+        if(!lists) return;
+        var all = []; lists.forEach(function(a){ all = all.concat(a); });
+        all.sort(function(x, y){ return (Date.parse(y.videoPublishedAt) || 0) - (Date.parse(x.videoPublishedAt) || 0); });
+        var ids = all.map(function(v){ return v.videoId; }).filter(Boolean).slice(0, 50);
+        if(!ids.length){ message("Keine neuen Videos in deinen Abos."); feed.loading = false; return; }
+        return fetchDetails(ids).then(function(map){
+          renderVideos(ids.map(function(id){ return map[id]; }).filter(Boolean), false);
+          feed.loading = false;
+        });
+      })
+      .catch(function(e){ feed.loading = false; showError(e); });
+  }
+  function loadLikes(){
+    if(!signedIn()){ signIn(); return; }
+    if(!KEY){ openSettings(true); return; }
+    feed = { mode:"likes", query:"", pageToken:"", loading:false, done:false };
+    busy("„Mag ich“-Videos …");
+    fetchLikes(false);
+  }
+  function fetchLikes(append){
+    feed.loading = true;
+    var params = { part:"snippet,contentDetails,statistics", myRating:"like", maxResults:"24" };
+    if(feed.pageToken) params.pageToken = feed.pageToken;
+    api("videos", params).then(function(data){
+      feed.pageToken = data.nextPageToken || ""; feed.done = !feed.pageToken;
+      renderVideos(data.items || [], append);
+      feed.loading = false;
+    }).catch(function(e){ feed.loading = false; showMore(false); if(!append) showError(e); });
+  }
+  function loadPlaylists(){
+    if(!signedIn()){ signIn(); return; }
+    feed = { mode:"playlists", query:"", pageToken:"", loading:true, done:true };
+    busy("Deine Playlists …");
+    api("playlists", { part:"snippet,contentDetails", mine:"true", maxResults:"50" })
+      .then(function(data){ renderPlaylists(data.items || []); feed.loading = false; })
+      .catch(function(e){ feed.loading = false; showError(e); });
+  }
+  function renderPlaylists(items){
+    showMore(false); clearStatus();
+    var grid = $("grid"); grid.innerHTML = "";
+    if(!items.length){ message("Keine Playlists gefunden."); return; }
+    items.forEach(function(pl){
+      var sn = pl.snippet || {};
+      var card = el("button","card"); card.type = "button";
+      var thumb = el("div","thumb");
+      var img = el("img"); img.loading = "lazy"; img.alt = ""; img.src = thumbUrl(sn); thumb.appendChild(img);
+      var badge = el("span","dur");
+      badge.textContent = (pl.contentDetails && pl.contentDetails.itemCount != null) ? (pl.contentDetails.itemCount + " Videos") : "Playlist";
+      thumb.appendChild(badge); card.appendChild(thumb);
+      var meta = el("div","cmeta"); var ct = el("div","ctext");
+      var title = el("div","ctitle"); title.textContent = sn.title || "Playlist";
+      ct.appendChild(title); meta.appendChild(ct); card.appendChild(meta);
+      card.onclick = function(){ openPlaylist(pl.id, sn.title || "Playlist"); };
+      grid.appendChild(card);
+    });
+    $("main").scrollTop = 0;
+  }
+  function openPlaylist(pid, title){
+    feed = { mode:"playlist", query:"", playlistId:pid, pageToken:"", loading:false, done:false };
+    activeChip = ""; renderChips();
+    busy(title + " …");
+    fetchPlaylistItems(false);
+  }
+  function fetchPlaylistItems(append){
+    feed.loading = true;
+    var params = { part:"contentDetails", playlistId: feed.playlistId, maxResults:"24" };
+    if(feed.pageToken) params.pageToken = feed.pageToken;
+    api("playlistItems", params).then(function(data){
+      feed.pageToken = data.nextPageToken || ""; feed.done = !feed.pageToken;
+      var ids = (data.items || []).map(function(i){ return i.contentDetails && i.contentDetails.videoId; }).filter(Boolean);
+      if(!ids.length){ if(!append) message("Playlist ist leer."); feed.loading = false; showMore(false); return; }
+      return fetchDetails(ids).then(function(map){
+        renderVideos(ids.map(function(id){ return map[id]; }).filter(Boolean), append);
+        feed.loading = false;
+      });
+    }).catch(function(e){ feed.loading = false; showMore(false); if(!append) showError(e); });
+  }
+
+  /* ---------- search suggestions (UNOFFICIAL endpoint via JSONP — may break) ---------- */
+  var sugTimer = null, sugSeq = 0;
+  function fetchSuggest(q){
+    var seq = ++sugSeq;
+    window.google = window.google || {}; window.google.ac = window.google.ac || {};
+    window.google.ac.h = function(data){
+      if(seq !== sugSeq) return;
+      var arr = (data && data[1]) ? data[1].map(function(x){ return x[0]; }) : [];
+      renderSuggest(arr);
+    };
+    var s = document.createElement("script");
+    s.src = "https://suggestqueries.google.com/complete/search?client=youtube&hl=de&ds=yt&q=" + encodeURIComponent(q);
+    s.onerror = function(){ if(seq === sugSeq) renderSuggest([]); if(s.parentNode) s.parentNode.removeChild(s); };
+    s.onload = function(){ if(s.parentNode) s.parentNode.removeChild(s); };
+    document.head.appendChild(s);
+  }
+  function renderSuggest(list){
+    var box = $("suggest"); if(!box) return;
+    if(!list || !list.length){ hideSuggest(); return; }
+    box.innerHTML = "";
+    list.slice(0, 10).forEach(function(text){
+      var it = el("button","sug-item"); it.type = "button";
+      it.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span></span>';
+      it.querySelector("span").textContent = text;
+      it.onclick = function(){
+        $("q").value = text; hideSuggest(); activeChip = ""; renderChips();
+        if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        search(text);
+      };
+      box.appendChild(it);
+    });
+    box.hidden = false;
+  }
+  function hideSuggest(){ var b = $("suggest"); if(b){ b.hidden = true; b.innerHTML = ""; } }
+
   /* ---------- chips ---------- */
+  function chipList(){
+    return signedIn() ? ["Abos","Mag ich","Playlists"].concat(CHIPS) : CHIPS;
+  }
   function renderChips(){
     var bar = $("chips");
     bar.innerHTML = "";
-    CHIPS.forEach(function(label){
+    chipList().forEach(function(label){
       var c = el("button","chip" + (label===activeChip?" active":"")); c.type = "button";
       c.textContent = label;
       c.onclick = function(){
-        activeChip = label; renderChips();
+        activeChip = label; renderChips(); hideSuggest();
         if(label==="Trends"){ $("q").value = ""; loadTrending(); }
+        else if(label==="Abos"){ $("q").value = ""; loadAbos(); }
+        else if(label==="Mag ich"){ $("q").value = ""; loadLikes(); }
+        else if(label==="Playlists"){ $("q").value = ""; loadPlaylists(); }
         else { $("q").value = label; search(label==="Live"?"live":label); }
         $("main").scrollTop = 0;
       };
@@ -413,17 +649,26 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   function openSettings(firstRun){
     $("keyInput").value = KEY;
     $("regionInput").value = REGION;
+    $("clientInput").value = OAUTH;
+    updateAuthUi();
     $("settings").hidden = false;
     if(firstRun) message("Füge oben rechts über das Zahnrad deinen YouTube-API-Schlüssel hinzu, um loszulegen.");
   }
   function closeSettings(){ $("settings").hidden = true; }
   $("settingsBtn").onclick = function(){ openSettings(false); };
   $("settingsCancel").onclick = closeSettings;
+  $("signOutRow").onclick = function(){ signOut(); closeSettings(); };
+  $("authBtn").onclick = function(){
+    if(signedIn()){ activeChip = "Abos"; renderChips(); loadAbos(); }
+    else signIn();
+  };
   $("settingsSave").onclick = function(){
     KEY = $("keyInput").value.trim();
     REGION = ($("regionInput").value.trim() || "DE").toUpperCase().slice(0,2);
+    OAUTH = $("clientInput").value.trim();
     localStorage.setItem("cartube.key", KEY);
     localStorage.setItem("cartube.region", REGION);
+    localStorage.setItem("cartube.clientid", OAUTH);
     closeSettings();
     activeChip = "Trends"; renderChips();
     if(KEY) loadTrending(); else openSettings(true);
@@ -432,14 +677,25 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   /* ---------- search box ---------- */
   $("searchForm").onsubmit = function(e){
     e.preventDefault();
+    hideSuggest();
     var q = $("q").value.trim();
     if(!q){ activeChip = "Trends"; renderChips(); loadTrending(); return; }
     activeChip = ""; renderChips();
     if(document.activeElement && document.activeElement.blur) document.activeElement.blur();
     search(q);
   };
+  $("q").addEventListener("input", function(){
+    var v = $("q").value.trim();
+    clearTimeout(sugTimer);
+    if(v.length < 1){ hideSuggest(); return; }
+    sugTimer = setTimeout(function(){ fetchSuggest(v); }, 140);
+  });
+  document.addEventListener("click", function(e){
+    var sf = $("searchForm"), sb = $("suggest");
+    if(sb && !sb.hidden && !sf.contains(e.target) && !sb.contains(e.target)) hideSuggest();
+  });
   $("homeBtn").onclick = function(){
-    $("q").value = ""; activeChip = "Trends"; renderChips(); loadTrending();
+    $("q").value = ""; hideSuggest(); activeChip = "Trends"; renderChips(); loadTrending();
   };
 
   /* ---------- infinite scroll ---------- */
@@ -449,8 +705,13 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   });
 
   /* ---------- boot ---------- */
+  var cameFromAuth = handleRedirect();
+  updateAuthUi();
   renderChips();
-  if(KEY) loadTrending(); else openSettings(true);
+  if(signedIn()) loadProfile();
+  if(cameFromAuth && signedIn()){ activeChip = "Abos"; renderChips(); loadAbos(); }
+  else if(KEY) loadTrending();
+  else openSettings(true);
 })();
 </script>
 </body>
