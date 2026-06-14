@@ -62,6 +62,8 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   animation:spin .9s linear infinite;margin:0 auto 18px;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));grid-gap:26px 18px;}
+.more{padding:28px 0 12px;text-align:center;}
+.more .spinner{margin:0 auto;}
 .card{display:block;text-align:left;width:100%;}
 .thumb{position:relative;width:100%;padding-top:56.25%;background:var(--bg-2);border-radius:var(--r);overflow:hidden;}
 .thumb img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;}
@@ -142,6 +144,7 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
 <main id="main">
   <div id="status" class="status"></div>
   <div id="grid" class="grid"></div>
+  <div id="more" class="more" hidden><div class="spinner"></div></div>
 </main>
 
 <section class="player" id="player" hidden>
@@ -191,6 +194,9 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
 
   var CHIPS = ["Trends","Musik","Nachrichten","Live","Podcasts","Comedy","Gaming","Sport","Doku","Mix"];
   var activeChip = "Trends";
+
+  /* current feed: trending or a search query, with pagination state for infinite scroll */
+  var feed = { mode:"trending", query:"", pageToken:"", loading:false, done:false };
 
   /* ---------- helpers ---------- */
   function el(tag, cls){ var e = document.createElement(tag); if(cls) e.className = cls; return e; }
@@ -267,24 +273,53 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
 
   function loadTrending(){
     if(!KEY){ openSettings(true); return; }
+    feed = { mode:"trending", query:"", pageToken:"", loading:false, done:false };
     busy("Trends werden geladen …");
-    api("videos", { part:"snippet,contentDetails,statistics", chart:"mostPopular", maxResults:"24", regionCode:REGION })
-      .then(function(data){ renderVideos(data.items || []); })
-      .catch(showError);
+    fetchTrending(false);
+  }
+  function fetchTrending(append){
+    feed.loading = true;
+    var params = { part:"snippet,contentDetails,statistics", chart:"mostPopular", maxResults:"24", regionCode:REGION };
+    if(feed.pageToken) params.pageToken = feed.pageToken;
+    api("videos", params)
+      .then(function(data){
+        feed.pageToken = data.nextPageToken || "";
+        feed.done = !feed.pageToken;
+        renderVideos(data.items || [], append);
+        feed.loading = false;
+      })
+      .catch(function(e){ feed.loading = false; showMore(false); if(!append) showError(e); });
   }
   function search(query){
     if(!KEY){ openSettings(true); return; }
+    feed = { mode:"search", query:query, pageToken:"", loading:false, done:false };
     busy("Suche „" + query + "“ …");
-    api("search", { part:"snippet", type:"video", maxResults:"24", q:query, regionCode:REGION, relevanceLanguage:"de", safeSearch:"none" })
+    fetchSearch(false);
+  }
+  function fetchSearch(append){
+    feed.loading = true;
+    var params = { part:"snippet", type:"video", maxResults:"24", q:feed.query, regionCode:REGION, relevanceLanguage:"de", safeSearch:"none" };
+    if(feed.pageToken) params.pageToken = feed.pageToken;
+    api("search", params)
       .then(function(data){
+        feed.pageToken = data.nextPageToken || "";
+        feed.done = !feed.pageToken;
         var ids = (data.items||[]).map(function(it){ return it.id && it.id.videoId; }).filter(Boolean);
-        if(!ids.length){ message("Keine Ergebnisse für <b>"+esc(query)+"</b>."); return; }
+        if(!ids.length){ if(!append) message("Keine Ergebnisse für <b>"+esc(feed.query)+"</b>."); feed.loading = false; showMore(false); return; }
         return fetchDetails(ids).then(function(map){
-          renderVideos(ids.map(function(id){ return map[id]; }).filter(Boolean));
+          renderVideos(ids.map(function(id){ return map[id]; }).filter(Boolean), append);
+          feed.loading = false;
         });
       })
-      .catch(showError);
+      .catch(function(e){ feed.loading = false; showMore(false); if(!append) showError(e); });
   }
+  /* infinite scroll: pull the next page in the current feed mode */
+  function loadMore(){
+    if(feed.loading || feed.done || !feed.pageToken) return;
+    showMore(true);
+    if(feed.mode === "trending") fetchTrending(true); else fetchSearch(true);
+  }
+  function showMore(on){ var m = $("more"); if(m) m.hidden = !on; }
   function showError(err){
     var m = err && err.message ? err.message : "Unbekannter Fehler";
     var hint = "";
@@ -297,43 +332,47 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   }
 
   /* ---------- render ---------- */
-  function renderVideos(items){
-    clearStatus();
+  function buildCard(it){
+    var id = it.id;
+    var sn = it.snippet || {};
+    var card = el("button","card"); card.type = "button";
+
+    var thumb = el("div","thumb");
+    var img = el("img"); img.loading = "lazy"; img.alt = ""; img.src = thumbUrl(sn);
+    thumb.appendChild(img);
+    var dur = it.contentDetails && parseDuration(it.contentDetails.duration);
+    if(dur){ var d = el("span","dur"); d.textContent = dur; thumb.appendChild(d); }
+    card.appendChild(thumb);
+
+    var meta = el("div","cmeta");
+    var av = el("div","av");
+    av.textContent = (sn.channelTitle || "?").charAt(0).toUpperCase();
+    meta.appendChild(av);
+    var ct = el("div","ctext");
+    var title = el("div","ctitle"); title.textContent = sn.title || "";
+    var sub = el("div","csub");
+    var views = it.statistics && it.statistics.viewCount;
+    var bits = [sn.channelTitle || ""];
+    if(views) bits.push(compact(views) + " Aufrufe");
+    if(sn.publishedAt) bits.push(ago(sn.publishedAt));
+    sub.textContent = bits.filter(Boolean).join(" · ");
+    ct.appendChild(title); ct.appendChild(sub);
+    meta.appendChild(ct);
+    card.appendChild(meta);
+
+    card.onclick = function(){ openPlayer(id, sn.title || "", sub.textContent); };
+    return card;
+  }
+  function renderVideos(items, append){
+    showMore(false);
     var grid = $("grid");
-    grid.innerHTML = "";
-    if(!items.length){ message("Nichts gefunden."); return; }
-    items.forEach(function(it){
-      var id = it.id;
-      var sn = it.snippet || {};
-      var card = el("button","card"); card.type = "button";
-
-      var thumb = el("div","thumb");
-      var img = el("img"); img.loading = "lazy"; img.alt = ""; img.src = thumbUrl(sn);
-      thumb.appendChild(img);
-      var dur = it.contentDetails && parseDuration(it.contentDetails.duration);
-      if(dur){ var d = el("span","dur"); d.textContent = dur; thumb.appendChild(d); }
-      card.appendChild(thumb);
-
-      var meta = el("div","cmeta");
-      var av = el("div","av");
-      av.textContent = (sn.channelTitle || "?").charAt(0).toUpperCase();
-      meta.appendChild(av);
-      var ct = el("div","ctext");
-      var title = el("div","ctitle"); title.textContent = sn.title || "";
-      var sub = el("div","csub");
-      var views = it.statistics && it.statistics.viewCount;
-      var bits = [sn.channelTitle || ""];
-      if(views) bits.push(compact(views) + " Aufrufe");
-      if(sn.publishedAt) bits.push(ago(sn.publishedAt));
-      sub.textContent = bits.filter(Boolean).join(" · ");
-      ct.appendChild(title); ct.appendChild(sub);
-      meta.appendChild(ct);
-      card.appendChild(meta);
-
-      card.onclick = function(){ openPlayer(id, sn.title || "", sub.textContent); };
-      grid.appendChild(card);
-    });
-    $("main").scrollTop = 0;
+    if(!append){
+      clearStatus();
+      grid.innerHTML = "";
+      if(!items.length){ message("Nichts gefunden."); return; }
+    }
+    items.forEach(function(it){ grid.appendChild(buildCard(it)); });
+    if(!append) $("main").scrollTop = 0;
   }
 
   /* ---------- player ---------- */
@@ -402,6 +441,12 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
   $("homeBtn").onclick = function(){
     $("q").value = ""; activeChip = "Trends"; renderChips(); loadTrending();
   };
+
+  /* ---------- infinite scroll ---------- */
+  $("main").addEventListener("scroll", function(){
+    var m = $("main");
+    if(m.scrollTop + m.clientHeight >= m.scrollHeight - 700) loadMore();
+  });
 
   /* ---------- boot ---------- */
   renderChips();
