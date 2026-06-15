@@ -273,9 +273,12 @@ main{position:fixed;top:122px;left:0;right:0;bottom:0;overflow-y:auto;-webkit-ov
 
   /* ---------- API ---------- */
   function api(endpoint, params){
-    if(KEY) params.key = KEY;
+    // When signed in, the OAuth token IS the credential — do NOT also send the API key.
+    // Google rejects a request that carries both an API key and a token from different
+    // Cloud projects ("API Key and the authentication credential are from different projects").
     var opts = {};
     if(signedIn()) opts.headers = { Authorization: "Bearer " + accessToken };
+    else if(KEY) params.key = KEY;
     var qs = new URLSearchParams(params).toString();
     return fetch(BASE + endpoint + "?" + qs, opts).then(function(r){
       return r.json().then(function(data){
